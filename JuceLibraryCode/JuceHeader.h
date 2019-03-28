@@ -37,6 +37,7 @@
 namespace ProjectInfo
 {
     const char* const  projectName    = "MidiDemo";
+    const char* const  companyName    = "Brinko";
     const char* const  versionString  = "1.0.0";
     const int          versionNumber  = 0x10000;
 }

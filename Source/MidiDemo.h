@@ -45,6 +45,17 @@
 *******************************************************************************/
 
 #pragma once
+#include <vector>
+
+
+struct TextMessage : Message
+{
+	TextMessage(const String& t) 
+		: 
+		txt(t) 
+	{}
+	String txt;
+};
 
 
 //==============================================================================
@@ -95,7 +106,8 @@ public:
         midiMonitor.setScrollbarsShown (false);
         midiMonitor.setCaretVisible (false);
         midiMonitor.setPopupMenuEnabled (false);
-        midiMonitor.setFont(Font(15.0, Font::plain));
+		
+        midiMonitor.setFont(Font("lucida console",12.0,Font::plain));
         midiMonitor.setText ({});
         addAndMakeVisible (midiMonitor);
 
@@ -156,20 +168,25 @@ public:
 
     void handleMessage (const Message& msg) override
     {
-        // This is called on the message loop
+	  const TextMessage* txtm = dynamic_cast<const TextMessage*>(&msg);
+	  if(txtm)
+	  {
+		  _midiStrBuffer.append(txtm->txt,txtm->txt.length());
+		  midiMonitor.setText(_midiStrBuffer,false);
+	  } else {
+		  auto& cb=dynamic_cast<const MidiCallbackMessage&> (msg);
+		  auto& mm=cb.message;
+		  MidiInput* src=cb.input;
 
-      auto& cb = dynamic_cast<const MidiCallbackMessage&> (msg);
-      auto& mm = cb.message;
-      MidiInput* src = cb.input;
+		  String midiString;
+		  midiString<<String((mm.getTimeStamp()-_lastTimeStamp),4)<<" : ";
+		  _lastTimeStamp=mm.getTimeStamp();
+		  midiString<<String::toHexString(mm.getRawData(),mm.getRawDataSize(),1).toUpperCase();
+		  midiString<<"\n";
 
-        String midiString;
-        midiString << String((mm.getTimeStamp() - _lastTimeStamp),4) << " : ";
-          _lastTimeStamp = mm.getTimeStamp();
-        midiString << String::toHexString(mm.getRawData(), mm.getRawDataSize(), 1).toUpperCase();
-        midiString << "\n";
-        
-        _midiStrBuffer.append(midiString,midiString.length());
-        midiMonitor.setText(_midiStrBuffer, false);
+		  _midiStrBuffer.append(midiString,midiString.length());
+		  midiMonitor.setText(_midiStrBuffer,false);
+	  }
 
         adjustMidiStringBuffer();
     }
@@ -227,31 +244,56 @@ public:
         adjustMidiStringBuffer();
     }
 
-    void openDevice (bool isInput, int index)
+	template <size_t size>
+	MidiMessage fromRawMidi(const juce::uint8(&rawData)[size])
+	{
+		return MidiMessage(rawData,(int)size);
+	}
+
+    bool openDevice (bool isInput, int index)
     {
+
+
         if (isInput)
         {
-            jassert (midiInputs[index]->inDevice.get() == nullptr);
+			if(midiInputs[index]->inDevice.get()!=nullptr)
+				return true;
+
             midiInputs[index]->inDevice.reset (MidiInput::openDevice (index, this));
 
             if (midiInputs[index]->inDevice.get() == nullptr)
             {
                 DBG ("MidiDemo::openDevice: open input device for index = " << index << " failed!");
-                return;
+                return false;
             }
 
             midiInputs[index]->inDevice->start();
         }
         else
         {
-            jassert (midiOutputs[index]->outDevice.get() == nullptr);
+			if(midiOutputs[index]->outDevice.get()!=nullptr)
+				return true;
+
             midiOutputs[index]->outDevice.reset (MidiOutput::openDevice (index));
 
             if (midiOutputs[index]->outDevice.get() == nullptr)
             {
                 DBG ("MidiDemo::openDevice: open output device for index = " << index << " failed!");
+				return false;
             }
+			else
+			{
+				static uint8_t testModeOn[]={0xF0,0x00,0x01,0x55,0x13,0x03,0x51,0x01,0xF7};
+				MidiMessage m=fromRawMidi(testModeOn);
+				jassert(m.isSysEx());
+				midiOutputs[index]->outDevice->sendMessageNow(m);
+
+				static uint8_t ident[]={0xF0,0x7E,0x7F,0x06,0x01,0xF7};
+				midiOutputs[index]->outDevice->sendMessageNow(fromRawMidi(ident));
+				midiOutputs[index]->outDevice->sendMessageNow(fromRawMidi(ident));
+			}
         }
+		return true;
     }
 
     void closeDevice (bool isInput, int index)
@@ -342,19 +384,27 @@ private:
         //==============================================================================
         void selectedRowsChanged (int) override
         {
+			if(ignoreChange)
+				return;
+
             auto newSelectedItems = getSelectedRows();
             if (newSelectedItems != lastSelectedItems)
             {
                 for (auto i = 0; i < lastSelectedItems.size(); ++i)
                 {
-                    if (! newSelectedItems.contains (lastSelectedItems[i]))
-                        parent.closeDevice (isInput, lastSelectedItems[i]);
+					if(!newSelectedItems.contains(lastSelectedItems[i]))
+						parent.closeDevice(isInput,lastSelectedItems[i]);
                 }
 
                 for (auto i = 0; i < newSelectedItems.size(); ++i)
                 {
                     if (! lastSelectedItems.contains (newSelectedItems[i]))
-                        parent.openDevice (isInput, newSelectedItems[i]);
+					{
+// 						if(!parent.openDevice(isInput,newSelectedItems[i]))
+// 						{
+// 							deselectRow(i);
+// 						}
+					}
                 }
 
                 lastSelectedItems = newSelectedItems;
@@ -374,9 +424,26 @@ private:
             setSelectedRows (selectedRows, dontSendNotification);
         }
 
-    private:
+
+		virtual void listBoxItemClicked(int row,const MouseEvent& e) override
+		{
+			if(parent.openDevice(isInput,row))
+			{
+				ListBoxModel::listBoxItemClicked(row,e);
+			}
+			else
+			{
+				ignoreChange=true;
+				deselectRow(row);
+				lastSelectedItems.removeRange({row, row+1});
+				ignoreChange=false;
+			}
+
+		}
+	private:
         //==============================================================================
         MidiDemo& parent;
+		bool ignoreChange {false};
         bool isInput;
         SparseSet<int> lastSelectedItems;
     };
@@ -385,8 +452,6 @@ private:
     void handleIncomingMidiMessage (MidiInput* source, const MidiMessage &message) override
     {
         // This is called on the MIDI thread
-        
-                
             postMessage (new MidiCallbackMessage (source,message));
     }
 

@@ -13,7 +13,7 @@ BEGIN
   BEGIN
     BLOCK "040904E4"
     BEGIN
-      VALUE "CompanyName",  "JUCE\0"
+      VALUE "CompanyName",  "Brinko\0"
       VALUE "FileDescription",  "MidiDemo\0"
       VALUE "FileVersion",  "1.0.0\0"
       VALUE "ProductName",  "MidiDemo\0"
